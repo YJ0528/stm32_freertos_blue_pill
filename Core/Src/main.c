@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -43,6 +44,10 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+
+uint8_t digital_value;
+uint16_t analog_value;
+uint32_t delay_value;
 
 /* USER CODE END PV */
 
@@ -86,14 +91,40 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+    /* Read both analog and digital values */
+    analog_value = IR_Sensor_ReadAnalog();
+    digital_value = IR_Sensor_ReadDigital();
+    
+    /* Map analog value to LED blinking delay */
+    if (analog_value > 3000) {
+      delay_value = 50;  // Very close - fast blink
+    } else if (analog_value < 1000) {
+      delay_value = 500; // Far away - slow blink
+    } else {
+      delay_value = 500 - ((analog_value - 1000) * 450) / 2000;
+    }
+    
+    /* Toggle LED and delay based on distance */
+    HAL_GPIO_TogglePin(LED_BUILTIN_PORT, LED_BUILTIN_PIN);
+    HAL_Delay(delay_value);
+
+    /* Optional: Use digital value for threshold detection */
+    if (digital_value) {
+      // Object detected within sensor's threshold
+      // Add any additional behavior here
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -109,6 +140,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -135,6 +167,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }

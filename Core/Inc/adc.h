@@ -1,9 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file    gpio.h
+  * @file    adc.h
   * @brief   This file contains all the function prototypes for
-  *          the gpio.c file
+  *          the adc.c file
   ******************************************************************************
   * @attention
   *
@@ -18,8 +18,8 @@
   */
 /* USER CODE END Header */
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __GPIO_H__
-#define __GPIO_H__
+#ifndef __ADC_H__
+#define __ADC_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,28 +32,21 @@ extern "C" {
 
 /* USER CODE END Includes */
 
+extern ADC_HandleTypeDef hadc1;
+
 /* USER CODE BEGIN Private defines */
-
-// IR Sensor pins
-#define IR_SENSOR_ANALOG_PIN  GPIO_PIN_2    // A2 pin for analog reading
-#define IR_SENSOR_DIGITAL_PIN GPIO_PIN_1    // D1 pin for digital threshold
-#define IR_SENSOR_PORT        GPIOA         // Using GPIOA for sensor pins
-
-// Built-in LED pin
-#define LED_BUILTIN_PIN      GPIO_PIN_13   // PC13 is built-in LED
-#define LED_BUILTIN_PORT     GPIOC         // GPIOC for built-in LED
 
 /* USER CODE END Private defines */
 
-void MX_GPIO_Init(void);
+void MX_ADC1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-uint16_t IR_Sensor_ReadAnalog(void);
-uint8_t IR_Sensor_ReadDigital(void);
+
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
 }
 #endif
-#endif /*__ GPIO_H__ */
+
+#endif /* __ADC_H__ */
 
