@@ -18,7 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "adc.h"
+#include "i2c.h"
+#include "tim.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -45,15 +48,13 @@
 
 /* USER CODE BEGIN PV */
 
-uint8_t digital_value;
-uint16_t analog_value;
-uint32_t delay_value;
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
+
 
 /* USER CODE END PFP */
 
@@ -92,38 +93,48 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
+  MX_I2C1_Init();
+  MX_TIM1_Init();
+  MX_TIM4_Init();
+  MX_TIM3_Init();
+  MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
-
-  
+  HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+  HAL_TIM_Base_Start(&htim3);
+  HAL_TIM_Base_Start(&htim4);
   /* USER CODE END 2 */
+
+  /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
-    /* Read both analog and digital values */
-    analog_value = IR_Sensor_ReadAnalog();
-    digital_value = IR_Sensor_ReadDigital();
-    
+      
     /* Map analog value to LED blinking delay */
-    if (analog_value > 3000) {
-      delay_value = 50;  // Very close - fast blink
-    } else if (analog_value < 1000) {
-      delay_value = 500; // Far away - slow blink
-    } else {
-      delay_value = 500 - ((analog_value - 1000) * 450) / 2000;
-    }
+    // if (analog_value > 3000) {
+    //   delay_value = 1000;  // Very close - fast blink
+    // } else if (analog_value < 1000) {
+    //   delay_value = 50; // Far away - slow blink
+    // } else {
+    //   delay_value = 500 - ((analog_value - 1000) * 450) / 2000;
+    // }
     
-    /* Toggle LED and delay based on distance */
-    HAL_GPIO_TogglePin(LED_BUILTIN_PORT, LED_BUILTIN_PIN);
-    HAL_Delay(delay_value);
+    // /* Toggle LED and delay based on distance */
+    // HAL_GPIO_TogglePin(LED_BUILDIN_GPIO_Port, LED_BUILDIN_Pin);
+    // HAL_Delay(delay_value);
 
     /* Optional: Use digital value for threshold detection */
-    if (digital_value) {
-      // Object detected within sensor's threshold
-      // Add any additional behavior here
-    }
+    // if (digital_value) {
+    //   // Object detected within sensor's threshold
+    //   // Add any additional behavior here
+    // }
 
     /* USER CODE END WHILE */
 
@@ -181,6 +192,27 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM2 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM2) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

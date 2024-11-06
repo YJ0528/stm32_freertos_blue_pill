@@ -48,6 +48,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/fonts.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Src/ssd1306.c
 )
 
 # Add include paths
@@ -58,6 +60,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
+    # ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc
 )
 
 # Add linked libraries
@@ -66,3 +69,4 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
+

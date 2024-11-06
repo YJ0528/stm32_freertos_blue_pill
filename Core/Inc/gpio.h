@@ -29,27 +29,17 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "tim.h"
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN Private defines */
-
-// IR Sensor pins
-#define IR_SENSOR_ANALOG_PIN  GPIO_PIN_2    // A2 pin for analog reading
-#define IR_SENSOR_DIGITAL_PIN GPIO_PIN_1    // D1 pin for digital threshold
-#define IR_SENSOR_PORT        GPIOA         // Using GPIOA for sensor pins
-
-// Built-in LED pin
-#define LED_BUILTIN_PIN      GPIO_PIN_13   // PC13 is built-in LED
-#define LED_BUILTIN_PORT     GPIOC         // GPIOC for built-in LED
 
 /* USER CODE END Private defines */
 
 void MX_GPIO_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-uint16_t IR_Sensor_ReadAnalog(void);
-uint8_t IR_Sensor_ReadDigital(void);
+uint8_t Sensor_ReadDigital(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
