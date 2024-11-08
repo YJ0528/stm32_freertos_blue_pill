@@ -8,28 +8,38 @@ extern "C" {
 #include <stdint.h>
 
 typedef struct {
-  uint8_t IR_Digital_value;
-  uint8_t LDR_Digital_value;
-  uint8_t RHI, RHD, TCI, TCD, SUM;
-} Sensor_Digital_Data_t;
+    uint8_t digital_value; 
+    uint16_t analog_value;
+} IR_Sensor_Data_t;
 
 typedef struct {
-  uint16_t LDR_Analog_value;
-} hdac1_Analog_Data_t;
+    uint8_t digital_value;
+    uint16_t analog_value;
+} LDR_Sensor_Data_t;
 
 typedef struct {
-  uint16_t IR_Analog_value;
-} hdac2_Analog_Data_t;
+    uint8_t RHI, RHD, TCI, TCD, SUM;
+} DHT11_Sensor_Data_t;
 
 typedef struct {  
-  uint16_t encoder_count;
+    int16_t encoder_state;
+    int16_t encoder_count;
+    int16_t enc_difference;
+    int16_t buzzer_params_select;
 } Enc_SensorData_t;
+
+typedef struct {  
+    int32_t frequency;
+    int16_t volume;
+} Buzzer_Data_t;
+
 
 typedef struct {
     Enc_SensorData_t encData;
-    Sensor_Digital_Data_t digitalData;
-    hdac1_Analog_Data_t adc1Data;
-    hdac2_Analog_Data_t adc2Data;
+    DHT11_Sensor_Data_t dht11Data;
+    IR_Sensor_Data_t irData;
+    LDR_Sensor_Data_t ldrData;
+    Buzzer_Data_t buzzerData;
 } Combined_Sensor_Data_t;
 
 #ifdef __cplusplus

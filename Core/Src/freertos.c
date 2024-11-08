@@ -39,7 +39,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define TIM_FREQ 72000000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,9 +55,10 @@
 // Define message types
 typedef enum {
     MSG_TYPE_ENC,
-    MSG_TYPE_DIGITAL,
-    MSG_TYPE_ADC1,
-    MSG_TYPE_ADC2
+    MSG_TYPE_IR,
+    MSG_TYPE_LDR,
+    MSG_TYPE_DHT11,
+    MSG_TYPE_BUZZER,
 } Message_Type_t;
 
 // Create a wrapper struct for messages
@@ -198,68 +199,126 @@ void MX_FREERTOS_Init(void) {
 void StartSensorTask(void const * argument)
 {
   /* USER CODE BEGIN StartSensorTask */
-
+    static uint16_t hadc1_values[1];
+    static uint16_t hadc2_values[1];
+    static int16_t enc_previous_count = 0;
+    static int16_t enc_current_count = 0;
+    static int16_t button_previous = 0;
+    static int16_t button_current = 0;
+    
    // Static allocation to ensure data remains valid
     static Enc_SensorData_t EncSensorData = {0};
-    static Sensor_Digital_Data_t SensorDigitalData = {0};
-    static hdac1_Analog_Data_t hdac1AnalogData = {0};
-    static hdac2_Analog_Data_t hdac2AnalogData = {0};
+    static LDR_Sensor_Data_t LDRSensorData = {0};
+    static IR_Sensor_Data_t IRSsensorData = {0};
+    static DHT11_Sensor_Data_t DHT11SensorData = {0};
+    static Buzzer_Data_t buzzerSignalData = {0};
 
     static Queue_Message_t encMsg = {0};
-    static Queue_Message_t digitalMsg = {0};
-    static Queue_Message_t adc1Msg = {0};
-    static Queue_Message_t adc2Msg = {0};
+    static Queue_Message_t ldrMsg = {0};
+    static Queue_Message_t irMsg = {0};
+    static Queue_Message_t dht11Msg = {0};
+    static Queue_Message_t buzzerMsg = {0};
 
     static Combined_Sensor_Data_t combinedData = {0};
+
 
     // Initialize message structures once
     encMsg.type = MSG_TYPE_ENC;
     encMsg.data = &EncSensorData;
     
-    digitalMsg.type = MSG_TYPE_DIGITAL;
-    digitalMsg.data = &SensorDigitalData;
+    ldrMsg.type = MSG_TYPE_IR;
+    ldrMsg.data = &LDRSensorData;
     
-    adc1Msg.type = MSG_TYPE_ADC1;
-    adc1Msg.data = &hdac1AnalogData;
+    irMsg.type = MSG_TYPE_LDR;
+    irMsg.data = &IRSsensorData;
     
-    adc2Msg.type = MSG_TYPE_ADC2;
-    adc2Msg.data = &hdac2AnalogData;
-  
+    dht11Msg.type = MSG_TYPE_DHT11;
+    dht11Msg.data = &DHT11SensorData;
+
+    buzzerMsg.type = MSG_TYPE_BUZZER;
+    buzzerMsg.data = &buzzerSignalData;
+
+    // Initialize buzzer states based on the timer settings
+    buzzerSignalData.frequency = 7500;
+    buzzerSignalData.volume =  100 * htim3.Instance->CCR1 / htim3.Instance->ARR;
+
+    // Declare pointers to ADC readings
+    static uint16_t* ADC1_IN2;
+    static uint16_t* ADC1_IN4;
+
+    // Assign pointers address
+    ADC1_IN2 = &LDRSensorData.analog_value;
+    ADC1_IN4 = &IRSsensorData.analog_value;
+
   /* Infinite loop */
   for(;;)
   {
-    // Read sensor analog values
-    uint16_t hadc1_values[1];
-    uint16_t hadc2_values[1];
+    // Read sensor analog values (Alternative)
+    // LDRSensorData.analog_value = Sensor_ReadAnalog (&hadc1);
+    // IRSsensorData.analog_value = Sensor_ReadAnalog (&hadc2);
 
+    // Read sensor analog values (Whole HADC)
     if(Read_ADC_AllChannels(&hadc1, hadc1_values, 1))
       {
-        hdac1AnalogData.LDR_Analog_value = hadc1_values[0];
+        // LDRSensorData.analog_value = hadc1_values[0];
+        *ADC1_IN2 = hadc1_values[0]; 
       }
 
     if(Read_ADC_AllChannels(&hadc2, hadc2_values, 1))
       {
-        hdac2AnalogData.IR_Analog_value = hadc2_values[0];
+        // IRSsensorData.analog_value = hadc2_values[0];
+        *ADC1_IN4 = hadc2_values[0]; 
       }
 
-    // hdac1AnalogData.LDR_Analog_value = Sensor_ReadAnalog (&hadc1);
-    // hdac2AnalogData.IR_Analog_value = Sensor_ReadAnalog (&hadc2);
-
     // Read sensor digital values
-    SensorDigitalData.LDR_Digital_value = HAL_GPIO_ReadPin(LDR_SENSOR_DIGITAL_GPIO_Port, LDR_SENSOR_DIGITAL_Pin);
-    SensorDigitalData.IR_Digital_value = HAL_GPIO_ReadPin(IR_SENSOR_DIGITAL_GPIO_Port, IR_SENSOR_DIGITAL_Pin);
+    LDRSensorData.digital_value = HAL_GPIO_ReadPin(LDR_SENSOR_DIGITAL_GPIO_Port, LDR_SENSOR_DIGITAL_Pin);
+    IRSsensorData.digital_value = HAL_GPIO_ReadPin(IR_SENSOR_DIGITAL_GPIO_Port, IR_SENSOR_DIGITAL_Pin);
 
     // Read encoder
-    EncSensorData.encoder_count = (TIM1->CNT)/4;
-    
+
+    // Check encoder selected function (changing slides or hardware parameter)
+    button_current = HAL_GPIO_ReadPin(BUTTON_BLUE_GPIO_Port, BUTTON_BLUE_Pin);
+    if (button_previous != button_current && button_current != 1) EncSensorData.encoder_state += 1;
+    button_previous = button_current;
+
+    EncSensorData.enc_difference = TIM1->CNT - enc_previous_count;
+    if (EncSensorData.encoder_state%3 && abs(enc_current_count / 4 % 4)>=3)
+    {
+      // Buzzer parameters
+      switch (abs(enc_current_count / 4 % 4)){
+        case 3:
+        if (EncSensorData.encoder_state == 1){
+          buzzerSignalData.volume += EncSensorData.enc_difference;
+          enc_previous_count = TIM1->CNT;
+          if (buzzerSignalData.volume > 100) buzzerSignalData.volume = 100;
+          if (buzzerSignalData.volume < 0) buzzerSignalData.volume = 0;
+        }
+        else if (EncSensorData.encoder_state == 2){
+          buzzerSignalData.frequency += EncSensorData.enc_difference*100;
+          enc_previous_count = TIM1->CNT;
+          if (buzzerSignalData.frequency > 30000) buzzerSignalData.frequency  = 30000;
+          if (buzzerSignalData.frequency < 0) buzzerSignalData.frequency = 0;
+        }
+        break;
+      }
+        
+    }
+    else{
+      enc_previous_count = TIM1->CNT;
+      if (EncSensorData.enc_difference > 32767)EncSensorData.enc_difference -= 65533;
+      else if (EncSensorData.enc_difference < -32767) EncSensorData.enc_difference += 65533;
+      enc_current_count += EncSensorData.enc_difference;
+      EncSensorData.encoder_count = enc_current_count/4;
+      EncSensorData.encoder_state = 0;
+    }
     // Read DHT11 sensor values
     // if(DHT11_Start())
     // {
-    //   SensorDigitalData.RHI = DHT11_Read(); // Relative humidity integral
-    //   SensorDigitalData.RHD = DHT11_Read(); // Relative humidity decimal
-    //   SensorDigitalData.TCI = DHT11_Read(); // Celsius integral
-    //   SensorDigitalData.TCD = DHT11_Read(); // Celsius decimal
-    //   SensorDigitalData.SUM = DHT11_Read(); // Check sum
+    //   DHT11SensorData.RHI = DHT11_Read(); // Relative humidity integral
+    //   DHT11SensorData.RHD = DHT11_Read(); // Relative humidity decimal
+    //   DHT11SensorData.TCI = DHT11_Read(); // Celsius integral
+    //   DHT11SensorData.TCD = DHT11_Read(); // Celsius decimal
+    //   DHT11SensorData.SUM = DHT11_Read(); // Check sum
     // }
     // else 
     // {
@@ -269,11 +328,12 @@ void StartSensorTask(void const * argument)
     //   SSD1306_UpdateScreen();
     // }
 
-    // Setup and send encoder message
+    // Setup and send signals message
     combinedData.encData = EncSensorData;
-    combinedData.digitalData = SensorDigitalData;
-    combinedData.adc1Data = hdac1AnalogData;
-    combinedData.adc2Data = hdac2AnalogData;
+    combinedData.ldrData = LDRSensorData;
+    combinedData.irData = IRSsensorData;
+    combinedData.dht11Data = DHT11SensorData;
+    combinedData.buzzerData = buzzerSignalData;
     osMessagePut(sensorQueueHandle, (uint32_t)&combinedData, 0);
 
     osDelay(1);
@@ -291,15 +351,22 @@ void StartSensorTask(void const * argument)
 void StartDisplayTask(void const * argument)
 {
   /* USER CODE BEGIN StartDisplayTask */
-  static Enc_SensorData_t receivedEncData = {0};
-  static Sensor_Digital_Data_t receivedDigitalData = {0};
-  static hdac1_Analog_Data_t receivedAdc1Data = {0};
-  static hdac2_Analog_Data_t receivedAdc2Data = {0};
+
+  // Initialize sensor msg type object
   static Queue_Message_t* receivedMsg;
+
+  // Initialize sensor data object
+  static Enc_SensorData_t receivedEncData = {0};
+  static IR_Sensor_Data_t receivedIRData = {0};
+  static LDR_Sensor_Data_t receivedLDR1Data = {0};
+  static DHT11_Sensor_Data_t receivedDHT11Data = {0};
+  static Buzzer_Data_t receivedBuzzerData = {0};
+  
+  
   static Combined_Sensor_Data_t* receivedData;
-  SSD1306_Init();
+
   previous = 0;
-    
+  SSD1306_Init();
   SSD1306_GotoXY (0,0);
   SSD1306_Puts ("Hello!", &Font_11x18, 1);
   SSD1306_GotoXY (0, 30);
@@ -335,88 +402,100 @@ void StartDisplayTask(void const * argument)
       }
 
       // Display the current page info
-      switch (receivedEncData.encoder_count % 4) {
+      switch (abs(receivedEncData.encoder_count % 4)) {
         case 0:
-            // Unpack the IR sensor data
-            receivedDigitalData = receivedData->digitalData;
-            receivedAdc2Data = receivedData->adc2Data;
+        // Unpack the IR sensor data
+        receivedIRData = receivedData->irData;
 
-            // Display IR sensor data
-            SSD1306_GotoXY(0,0);
-            SSD1306_Puts("IR Sensor", &Font_11x18, 1);
-            sprintf(snum, "Analog :%d", receivedAdc2Data.IR_Analog_value);
-            SSD1306_GotoXY(0, 30);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            sprintf(snum, "Digital : %d", receivedDigitalData.IR_Digital_value);
-            SSD1306_GotoXY(0, 45);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            break;
+        // Display IR sensor data 
+        SSD1306_GotoXY(0,0);
+        SSD1306_Puts("IR Sensor", &Font_11x18, 1);
+        sprintf(snum, "Analog   :%4d", receivedIRData.analog_value);
+        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        sprintf(snum, "Digital : %d", receivedIRData.digital_value);
+        SSD1306_GotoXY(0, 45);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        break;
 
         case 1:
-            // Unpack the LDR sensor data
-            receivedDigitalData = receivedData->digitalData;
-            receivedAdc1Data = receivedData->adc1Data;
+        // Unpack the LDR sensor data
+        receivedLDR1Data = receivedData->ldrData;
 
-            // Display LDR sensor data
-            SSD1306_GotoXY(0,0);
-            SSD1306_Puts("LDR Sensor", &Font_11x18, 1);
-            sprintf(snum, "Analog :%4d", receivedAdc1Data.LDR_Analog_value);
-            SSD1306_GotoXY(0, 30);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            sprintf(snum, "Digital : %d", receivedDigitalData.LDR_Digital_value);
-            SSD1306_GotoXY(0, 45);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            break;
+        // Display LDR sensor data
+        SSD1306_GotoXY(0,0);
+        SSD1306_Puts("LDR Sensor", &Font_11x18, 1);
+        sprintf(snum, "Analog   :%4d", receivedLDR1Data.analog_value);
+        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        sprintf(snum, "Digital : %d", receivedLDR1Data.digital_value);
+        SSD1306_GotoXY(0, 45);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        break;
 
         case 2:
-            // Display encoder data
-            SSD1306_GotoXY(0,0);
-            SSD1306_Puts("Encoder", &Font_11x18, 1);
-            sprintf(snum, "Count : %d", receivedEncData.encoder_count);
-            SSD1306_GotoXY(0, 30);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            break;
+        // Display encoder data
+        SSD1306_GotoXY(0,0);
+        SSD1306_Puts("Encoder", &Font_11x18, 1);
+        sprintf(snum, "Count : %5d", receivedEncData.encoder_count);
+        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        break;
 
         case 3:
-            // Unpack the DHT11 sensor data
-            receivedDigitalData = receivedData->digitalData;
+        // Unpack the buzzer data
+        receivedBuzzerData = receivedData->buzzerData;
+        SSD1306_GotoXY(0,0);
+        SSD1306_Puts("Buzzer", &Font_11x18, 1);
+        sprintf(snum, "vol  :    %3d %%", receivedBuzzerData.volume);
+        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        sprintf(snum, "freq :  %4d hz", receivedBuzzerData.frequency);
+        SSD1306_GotoXY(0, 45);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        
+        break;
 
-            if (receivedDigitalData.RHI + receivedDigitalData.RHD + receivedDigitalData.TCI + receivedDigitalData.TCD == receivedDigitalData.SUM)
-            {
-                // Can use RHI and TCI for any purposes if whole number only needed
-                tCelsius = (float)receivedDigitalData.TCI + (float)(receivedDigitalData.TCD/10.0);
-                tFahrenheit = tCelsius * 9/5 + 32;
-                RH = (float)receivedDigitalData.RHI + (float)(receivedDigitalData.RHD/10.0);
-                // Can use tCelsius, tFahrenheit and RH for any purposes
-                TFI = tFahrenheit; // Fahrenheit integral
-                TFD = tFahrenheit*10-TFI*10; // Fahrenheit decimal
-                // Display Temperature data
-                SSD1306_GotoXY(0,0);
-                SSD1306_Puts("Weather", &Font_11x18, 1);
-                sprintf(snum, "Pin state :%d", HAL_GPIO_ReadPin (DHT11_SENSOR_GPIO_Port, DHT11_SENSOR_Pin));
-                SSD1306_GotoXY(0, 30);
-                SSD1306_Puts(snum, &Font_7x10, 1);
-                sprintf(snum, "Pin type : %d", (DHT11_SENSOR_GPIO_Port->CRL >> (4 * (__builtin_ctz(DHT11_SENSOR_Pin) % 8))) & 0x3);
-                SSD1306_GotoXY(0, 45);
-                SSD1306_Puts(snum, &Font_7x10, 1);
-                // sprintf(strCopy,"%d.%d C ", receivedDigitalData.TCI, receivedDigitalData.TCD);
-                // SSD1306_GotoXY (0, 30);
-                // SSD1306_Puts (strCopy, &Font_7x10, 1);
-                // sprintf(strCopy,"%d.%d F ", TFI, TFD);
-                // SSD1306_GotoXY (0, 40);
-                // SSD1306_Puts (strCopy, &Font_7x10, 1);
-                // sprintf(strCopy,"%d.%d %% ", receivedDigitalData.RHI, receivedDigitalData.RHD);
-                // SSD1306_GotoXY (0, 50);
-                // SSD1306_Puts (strCopy, &Font_7x10, 1);
-            }
-            else
-            {
-                // Empty else block preserved
-            }
-            break;
+        case 4:
+        // Unpack the DHT11 sensor data
+        receivedDHT11Data = receivedData->dht11Data;
+
+        if (receivedDHT11Data.RHI + receivedDHT11Data.RHD + receivedDHT11Data.TCI + receivedDHT11Data.TCD == receivedDHT11Data.SUM)
+        {
+            // Can use RHI and TCI for any purposes if whole number only needed
+            tCelsius = (float)receivedDHT11Data.TCI + (float)(receivedDHT11Data.TCD/10.0);
+            tFahrenheit = tCelsius * 9/5 + 32;
+            RH = (float)receivedDHT11Data.RHI + (float)(receivedDHT11Data.RHD/10.0);
+            // Can use tCelsius, tFahrenheit and RH for any purposes
+            TFI = tFahrenheit; // Fahrenheit integral
+            TFD = tFahrenheit*10-TFI*10; // Fahrenheit decimal
+            // Display Temperature data
+            SSD1306_GotoXY(0,0);
+            SSD1306_Puts("Weather", &Font_11x18, 1);
+            sprintf(snum, "Pin state :%d", HAL_GPIO_ReadPin (DHT11_SENSOR_GPIO_Port, DHT11_SENSOR_Pin));
+            SSD1306_GotoXY(0, 30);
+            SSD1306_Puts(snum, &Font_7x10, 1);
+            sprintf(snum, "Pin type : %d", (DHT11_SENSOR_GPIO_Port->CRL >> (4 * (__builtin_ctz(DHT11_SENSOR_Pin) % 8))) & 0x3);
+            SSD1306_GotoXY(0, 45);
+            SSD1306_Puts(snum, &Font_7x10, 1);
+            // sprintf(strCopy,"%d.%d C ", receivedDHT11Data.TCI, receivedDHT11Data.TCD);
+            // SSD1306_GotoXY (0, 30);
+            // SSD1306_Puts (strCopy, &Font_7x10, 1);
+            // sprintf(strCopy,"%d.%d F ", TFI, TFD);
+            // SSD1306_GotoXY (0, 40);
+            // SSD1306_Puts (strCopy, &Font_7x10, 1);
+            // sprintf(strCopy,"%d.%d %% ", receivedDHT11Data.RHI, receivedDHT11Data.RHD);
+            // SSD1306_GotoXY (0, 50);
+            // SSD1306_Puts (strCopy, &Font_7x10, 1);
+        }
+        else
+        {
+            // Empty else block preserved
+        }
+        break;
 
         default:
-            break;
+          break;
       }
       SSD1306_UpdateScreen();
     }
@@ -436,9 +515,52 @@ void StartDisplayTask(void const * argument)
 void StartHardwareTask(void const * argument)
 {
   /* USER CODE BEGIN StartHardwareTask */
+
+  // Initialize sensor msg type object
+  static Queue_Message_t* receivedMsg;
+
+  // Initialize sensor data object
+  static Enc_SensorData_t receivedEncData = {0};
+  static IR_Sensor_Data_t receivedIRData = {0};
+  static LDR_Sensor_Data_t receivedLDR1Data = {0};
+  // static DHT11_Sensor_Data_t receivedDHT11Data = {0};
+  static Buzzer_Data_t receivedBuzzerData = {0};
+
+  static Combined_Sensor_Data_t* receivedData;
+  
   /* Infinite loop */
   for(;;)
   {
+    osEvent event = osMessageGet(sensorQueueHandle, 100);
+    if (event.status == osEventMessage)
+    {
+      // Unpack the messages to local
+      Combined_Sensor_Data_t* receivedData = (Combined_Sensor_Data_t*)event.value.p;
+
+      // Pointers for signal data
+      receivedIRData = receivedData->irData;
+      receivedLDR1Data = receivedData->ldrData;
+      receivedBuzzerData = receivedData->buzzerData;
+
+
+      HAL_GPIO_WritePin (LED_BUILDIN_GPIO_Port, LED_BUILDIN_Pin, !receivedLDR1Data.digital_value);
+
+      
+      if (!receivedIRData.digital_value)
+      {
+        if (receivedIRData.analog_value <= 200) setBuzzer(htim3,TIM_CHANNEL_1,receivedBuzzerData.frequency, receivedBuzzerData.volume);
+        else
+        {
+          setBuzzer(htim3,TIM_CHANNEL_1,receivedBuzzerData.frequency, receivedBuzzerData.volume);
+          HAL_Delay(pow(sqrt(receivedIRData.analog_value), 1.4));
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+          HAL_Delay(pow(sqrt(receivedIRData.analog_value), 1.4));
+        }
+        
+      } 
+      else __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+      
+    }
     osDelay(1);
   }
   /* USER CODE END StartHardwareTask */
@@ -446,6 +568,31 @@ void StartHardwareTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+
+
+void setBuzzer(TIM_HandleTypeDef htim, uint32_t channel, uint32_t frequency, uint8_t volume) {  
+
+  // If frequency is 0 or volume is 0, turn off the buzzer
+  if (frequency == 0 || volume == 0) {
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0); // Set duty 100% (OFF for active LOW)
+      return;
+  }
+
+  // Set the ARR value for frequency control
+  __HAL_TIM_SET_PRESCALER(&htim, TIM_FREQ/(htim3.Instance->ARR * frequency));
+
+  // Calculate CCR value for volume control (inverted for active LOW)
+  // Volume is 0-100%, so we calculate the duty cycle as a percentage of ARR
+  // For active LOW, we invert the duty cycle (100% - volume%)
+  uint32_t ccr = volume * htim.Instance->ARR / 100;
+
+  // Set the CCR value for the specified channel
+  __HAL_TIM_SET_COMPARE(&htim, channel, ccr);
+
+
+}
+
 void microDelay (uint16_t delay)
 {
   __HAL_TIM_SET_COUNTER(&htim4, 0);

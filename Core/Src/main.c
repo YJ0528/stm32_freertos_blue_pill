@@ -100,8 +100,9 @@ int main(void)
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
-  HAL_TIM_Base_Start(&htim3);
-  HAL_TIM_Base_Start(&htim4);
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+
+  // HAL_TIM_Base_Start(&htim4);
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in cmsis_os2.c) */
@@ -116,26 +117,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      
-    /* Map analog value to LED blinking delay */
-    // if (analog_value > 3000) {
-    //   delay_value = 1000;  // Very close - fast blink
-    // } else if (analog_value < 1000) {
-    //   delay_value = 50; // Far away - slow blink
-    // } else {
-    //   delay_value = 500 - ((analog_value - 1000) * 450) / 2000;
-    // }
-    
-    // /* Toggle LED and delay based on distance */
-    // HAL_GPIO_TogglePin(LED_BUILDIN_GPIO_Port, LED_BUILDIN_Pin);
-    // HAL_Delay(delay_value);
-
-    /* Optional: Use digital value for threshold detection */
-    // if (digital_value) {
-    //   // Object detected within sensor's threshold
-    //   // Add any additional behavior here
-    // }
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

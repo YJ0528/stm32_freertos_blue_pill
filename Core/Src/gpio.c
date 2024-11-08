@@ -74,16 +74,18 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin : PtPin */
   GPIO_InitStruct.Pin = DHT11_SENSOR_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(DHT11_SENSOR_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PtPin */
+  GPIO_InitStruct.Pin = BUTTON_BLUE_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(BUTTON_BLUE_GPIO_Port, &GPIO_InitStruct);
 
 }
 
 /* USER CODE BEGIN 2 */
-uint8_t Sensor_ReadDigital(void)
-{
-  return HAL_GPIO_ReadPin(IR_SENSOR_DIGITAL_GPIO_Port, IR_SENSOR_DIGITAL_Pin);
-}
 
 /* USER CODE END 2 */
