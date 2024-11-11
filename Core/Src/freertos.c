@@ -30,6 +30,7 @@
 #include "stdio.h" 
 #include "tim.h"
 #include "sensor_types.h"
+#include "mpu6050.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,20 +53,6 @@
 
 // Structure to hold sensor data
 
-// Define message types
-typedef enum {
-    MSG_TYPE_ENC,
-    MSG_TYPE_IR,
-    MSG_TYPE_LDR,
-    MSG_TYPE_DHT11,
-    MSG_TYPE_BUZZER,
-} Message_Type_t;
-
-// Create a wrapper struct for messages
-typedef struct {
-    Message_Type_t type;    // Type of data
-    void* data;            // Pointer to actual data
-} Queue_Message_t;
 
 // Original variables
 int previous;
@@ -212,12 +199,16 @@ void StartSensorTask(void const * argument)
     static IR_Sensor_Data_t IRSsensorData = {0};
     static DHT11_Sensor_Data_t DHT11SensorData = {0};
     static Buzzer_Data_t buzzerSignalData = {0};
+    static Servo_Data_t servoPWMSignalData = {0};
+    static MPU6050_t MPU6050 = {0};
 
     static Queue_Message_t encMsg = {0};
     static Queue_Message_t ldrMsg = {0};
     static Queue_Message_t irMsg = {0};
     static Queue_Message_t dht11Msg = {0};
     static Queue_Message_t buzzerMsg = {0};
+    static Queue_Message_t servoMsg = {0};
+    static Queue_Message_t mpu6050Msg = {0};
 
     static Combined_Sensor_Data_t combinedData = {0};
 
@@ -238,9 +229,18 @@ void StartSensorTask(void const * argument)
     buzzerMsg.type = MSG_TYPE_BUZZER;
     buzzerMsg.data = &buzzerSignalData;
 
+    servoMsg.type = MSG_TYPE_SERVO;
+    servoMsg.data = &servoPWMSignalData;
+
+    mpu6050Msg.type = MSG_TYPE_MPU6050;
+    mpu6050Msg.data = &MPU6050;
+
     // Initialize buzzer states based on the timer settings
     buzzerSignalData.frequency = 7500;
     buzzerSignalData.volume =  100 * htim3.Instance->CCR1 / htim3.Instance->ARR;
+
+    // Initialize servo states to 90 degree
+    servoPWMSignalData.angle =  90;
 
     // Declare pointers to ADC readings
     static uint16_t* ADC1_IN2;
@@ -249,6 +249,9 @@ void StartSensorTask(void const * argument)
     // Assign pointers address
     ADC1_IN2 = &LDRSensorData.analog_value;
     ADC1_IN4 = &IRSsensorData.analog_value;
+
+    // Wait MPU6050 to finish initialization
+    while (MPU6050_Init(&hi2c2) == 1);
 
   /* Infinite loop */
   for(;;)
@@ -274,39 +277,65 @@ void StartSensorTask(void const * argument)
     LDRSensorData.digital_value = HAL_GPIO_ReadPin(LDR_SENSOR_DIGITAL_GPIO_Port, LDR_SENSOR_DIGITAL_Pin);
     IRSsensorData.digital_value = HAL_GPIO_ReadPin(IR_SENSOR_DIGITAL_GPIO_Port, IR_SENSOR_DIGITAL_Pin);
 
+    // Read MPU6050 values
+    MPU6050_Read_All(&hi2c2, &MPU6050);
+    HAL_Delay (5);
+    
     // Read encoder
-
     // Check encoder selected function (changing slides or hardware parameter)
     button_current = HAL_GPIO_ReadPin(BUTTON_BLUE_GPIO_Port, BUTTON_BLUE_Pin);
     if (button_previous != button_current && button_current != 1) EncSensorData.encoder_state += 1;
     button_previous = button_current;
 
     EncSensorData.enc_difference = TIM1->CNT - enc_previous_count;
-    if (EncSensorData.encoder_state%3 && abs(enc_current_count / 4 % 4)>=3)
+    enc_previous_count = TIM1->CNT;
+    if (EncSensorData.enc_difference > 32767)EncSensorData.enc_difference -= 65533;
+    else if (EncSensorData.enc_difference < -32767) EncSensorData.enc_difference += 65533;
+    
+    if (EncSensorData.encoder_state%3 && 
+        ((enc_current_count >= 0 && enc_current_count/4 % 5 >= 3) ||
+        (enc_current_count < 0 && enc_current_count/4 % 5 >= -2)))    
     {
-      // Buzzer parameters
-      switch (abs(enc_current_count / 4 % 4)){
-        case 3:
-        if (EncSensorData.encoder_state == 1){
+      
+      switch (enc_current_count / 4 % 5)
+      {
+
+        // Buzzer parameters
+        case 3: case -2:
+        switch (EncSensorData.encoder_state)
+        {
+          case 1:
           buzzerSignalData.volume += EncSensorData.enc_difference;
-          enc_previous_count = TIM1->CNT;
           if (buzzerSignalData.volume > 100) buzzerSignalData.volume = 100;
           if (buzzerSignalData.volume < 0) buzzerSignalData.volume = 0;
-        }
-        else if (EncSensorData.encoder_state == 2){
+          break;
+
+          case 2:
           buzzerSignalData.frequency += EncSensorData.enc_difference*100;
-          enc_previous_count = TIM1->CNT;
           if (buzzerSignalData.frequency > 30000) buzzerSignalData.frequency  = 30000;
           if (buzzerSignalData.frequency < 0) buzzerSignalData.frequency = 0;
+          break;
         }
-        break;
+        break; 
+
+        // Servo motor parameters
+        case 4: case -1:
+        switch (EncSensorData.encoder_state)
+        {
+          case 1:
+          servoPWMSignalData.angle += EncSensorData.enc_difference;
+          if (servoPWMSignalData.angle > 180) servoPWMSignalData.angle  = 180;
+          if (servoPWMSignalData.angle < 0) servoPWMSignalData.angle = 0;
+          break;
+          case 2:
+          EncSensorData.encoder_state += 1;
+          break;
+        }
+        break; 
       }
         
     }
     else{
-      enc_previous_count = TIM1->CNT;
-      if (EncSensorData.enc_difference > 32767)EncSensorData.enc_difference -= 65533;
-      else if (EncSensorData.enc_difference < -32767) EncSensorData.enc_difference += 65533;
       enc_current_count += EncSensorData.enc_difference;
       EncSensorData.encoder_count = enc_current_count/4;
       EncSensorData.encoder_state = 0;
@@ -334,6 +363,8 @@ void StartSensorTask(void const * argument)
     combinedData.irData = IRSsensorData;
     combinedData.dht11Data = DHT11SensorData;
     combinedData.buzzerData = buzzerSignalData;
+    combinedData.servoData = servoPWMSignalData;
+    combinedData.mpuData = MPU6050;
     osMessagePut(sensorQueueHandle, (uint32_t)&combinedData, 0);
 
     osDelay(1);
@@ -361,6 +392,8 @@ void StartDisplayTask(void const * argument)
   static LDR_Sensor_Data_t receivedLDR1Data = {0};
   static DHT11_Sensor_Data_t receivedDHT11Data = {0};
   static Buzzer_Data_t receivedBuzzerData = {0};
+  static Servo_Data_t receivedServoData = {0};
+  static MPU6050_t receivedMPU6050Data = {0};
   
   
   static Combined_Sensor_Data_t* receivedData;
@@ -368,9 +401,9 @@ void StartDisplayTask(void const * argument)
   previous = 0;
   SSD1306_Init();
   SSD1306_GotoXY (0,0);
-  SSD1306_Puts ("Hello!", &Font_11x18, 1);
+  SSD1306_Puts ("Hello,", &Font_11x18, 1);
   SSD1306_GotoXY (0, 30);
-  SSD1306_Puts ("YJ", &Font_11x18, 1);
+  SSD1306_Puts ("World!", &Font_11x18, 1);
   SSD1306_UpdateScreen();
   HAL_Delay (500);
 
@@ -395,18 +428,18 @@ void StartDisplayTask(void const * argument)
       receivedEncData = receivedData->encData;
 
       // Compare the encoder value with the previous
-      if ((receivedEncData.encoder_count % 4) != previous)
+      if ((receivedEncData.encoder_count % 5) != previous)
       {
         SSD1306_Clear();
-        previous = receivedEncData.encoder_count % 4;
+        previous = receivedEncData.encoder_count % 5;
       }
 
       // Display the current page info
-      switch (abs(receivedEncData.encoder_count % 4)) {
-        case 0:
-        // Unpack the IR sensor data
+      switch (receivedEncData.encoder_count % 5) {
+        case 0:  
+        // Unpack IR sensor data
         receivedIRData = receivedData->irData;
-
+      
         // Display IR sensor data 
         SSD1306_GotoXY(0,0);
         SSD1306_Puts("IR Sensor", &Font_11x18, 1);
@@ -418,10 +451,10 @@ void StartDisplayTask(void const * argument)
         SSD1306_Puts(snum, &Font_7x10, 1);
         break;
 
-        case 1:
-        // Unpack the LDR sensor data
+        case 1: case -4: 
+        // Unpack LDR sensor data
         receivedLDR1Data = receivedData->ldrData;
-
+  
         // Display LDR sensor data
         SSD1306_GotoXY(0,0);
         SSD1306_Puts("LDR Sensor", &Font_11x18, 1);
@@ -433,18 +466,71 @@ void StartDisplayTask(void const * argument)
         SSD1306_Puts(snum, &Font_7x10, 1);
         break;
 
-        case 2:
-        // Display encoder data
+        case 2: case -3: 
+        
+        // Temperature
+        // sprintf(snum, "T:%d.%02d °C", receivedMPU6050Data.Temperature/100, abs(receivedMPU6050Data.Temperature%100));
+        // SSD1306_GotoXY(0, 20);
+        // SSD1306_Puts(snum, &Font_7x10, 1);
+
+        // Unpack MPU6050 data
+        receivedMPU6050Data = receivedData->mpuData;
+
+        // Display MPU6050 data
         SSD1306_GotoXY(0,0);
-        SSD1306_Puts("Encoder", &Font_11x18, 1);
-        sprintf(snum, "Count : %5d", receivedEncData.encoder_count);
-        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts("MPU-6050", &Font_11x18, 1);
+
+        // Display Header with partition
+        SSD1306_GotoXY(0, 20);
+        SSD1306_Puts("Acce:", &Font_7x10, 1);
+        SSD1306_GotoXY(70, 20);  // Adjusted x position for "Gyro:"
+        SSD1306_Puts("Gyro:", &Font_7x10, 1);
+
+        // Draw vertical line partition 
+        SSD1306_DrawLine(64, 20, 64, 63, SSD1306_COLOR_WHITE); 
+
+        // Accelerometer X 
+        sprintf(snum, "X:%1d.%03d", (int16_t)(receivedMPU6050Data.Ax),
+                abs((int16_t)(receivedMPU6050Data.Ax * 100) % 1000));
+        SSD1306_GotoXY(0, 31);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+
+        // Accelerometer Y 
+        sprintf(snum, "Y:%1d.%03d", (int16_t)(receivedMPU6050Data.Ay),
+                abs((int16_t)(receivedMPU6050Data.Ay * 100) % 1000));
+        SSD1306_GotoXY(0, 42);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+
+        // Accelerometer Z 
+        sprintf(snum, "Z:%1d.%03d", (int16_t)(receivedMPU6050Data.Az),
+                abs((int16_t)(receivedMPU6050Data.Az * 100) % 1000));
+        SSD1306_GotoXY(0, 53);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+
+        // Gyro X
+        sprintf(snum, "X:%2d.%02d", (int16_t)receivedMPU6050Data.KalmanAngleX,
+                abs((int16_t)(receivedMPU6050Data.KalmanAngleX * 100)%100));
+        SSD1306_GotoXY(70, 31);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+
+        // Gyro Y
+        sprintf(snum, "Y:%2d.%02d", (int16_t)receivedMPU6050Data.KalmanAngleY,
+                abs((int16_t)(receivedMPU6050Data.KalmanAngleY * 100)%100));
+        SSD1306_GotoXY(70, 42);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+
+        // Gyro Z
+        sprintf(snum, "Z:%2d.%02d", (int16_t)receivedMPU6050Data.Gz,
+                abs((int16_t)(receivedMPU6050Data.Gz * 100)%100));
+        SSD1306_GotoXY(70, 53);
         SSD1306_Puts(snum, &Font_7x10, 1);
         break;
 
-        case 3:
-        // Unpack the buzzer data
+        case 3: case -2: 
+        // Unpack buzzer data
         receivedBuzzerData = receivedData->buzzerData;
+
+        // Display buzzer data
         SSD1306_GotoXY(0,0);
         SSD1306_Puts("Buzzer", &Font_11x18, 1);
         sprintf(snum, "vol  :    %3d %%", receivedBuzzerData.volume);
@@ -453,13 +539,26 @@ void StartDisplayTask(void const * argument)
         sprintf(snum, "freq :  %4d hz", receivedBuzzerData.frequency);
         SSD1306_GotoXY(0, 45);
         SSD1306_Puts(snum, &Font_7x10, 1);
-        
         break;
 
-        case 4:
+        case 4: case -1: 
+        // Unpack servo motor data
+        receivedServoData = receivedData->servoData;
+
+        // Display servo motor data
+        SSD1306_GotoXY(0,0);
+        SSD1306_Puts("Servo Motor", &Font_11x18, 1);
+        sprintf(snum, "PWM  :    %4d %%", receivedServoData.angle);
+        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        break;
+        
+
+        case 5:
         // Unpack the DHT11 sensor data
         receivedDHT11Data = receivedData->dht11Data;
 
+        // Display servo motor data
         if (receivedDHT11Data.RHI + receivedDHT11Data.RHD + receivedDHT11Data.TCI + receivedDHT11Data.TCD == receivedDHT11Data.SUM)
         {
             // Can use RHI and TCI for any purposes if whole number only needed
@@ -525,6 +624,7 @@ void StartHardwareTask(void const * argument)
   static LDR_Sensor_Data_t receivedLDR1Data = {0};
   // static DHT11_Sensor_Data_t receivedDHT11Data = {0};
   static Buzzer_Data_t receivedBuzzerData = {0};
+  static Servo_Data_t receivedServoData = {0};
 
   static Combined_Sensor_Data_t* receivedData;
   
@@ -541,6 +641,7 @@ void StartHardwareTask(void const * argument)
       receivedIRData = receivedData->irData;
       receivedLDR1Data = receivedData->ldrData;
       receivedBuzzerData = receivedData->buzzerData;
+      receivedServoData = receivedData->servoData;
 
 
       HAL_GPIO_WritePin (LED_BUILDIN_GPIO_Port, LED_BUILDIN_Pin, !receivedLDR1Data.digital_value);
@@ -548,10 +649,10 @@ void StartHardwareTask(void const * argument)
       
       if (!receivedIRData.digital_value)
       {
-        if (receivedIRData.analog_value <= 200) setBuzzer(htim3,TIM_CHANNEL_1,receivedBuzzerData.frequency, receivedBuzzerData.volume);
+        if (receivedIRData.analog_value <= 200) setBuzzer(&htim3,TIM_CHANNEL_1, &receivedBuzzerData);
         else
         {
-          setBuzzer(htim3,TIM_CHANNEL_1,receivedBuzzerData.frequency, receivedBuzzerData.volume);
+          setBuzzer(&htim3,TIM_CHANNEL_1,&receivedBuzzerData);
           HAL_Delay(pow(sqrt(receivedIRData.analog_value), 1.4));
         __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
           HAL_Delay(pow(sqrt(receivedIRData.analog_value), 1.4));
@@ -560,6 +661,10 @@ void StartHardwareTask(void const * argument)
       } 
       else __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
       
+      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 500 + ((float)receivedServoData.angle/180 * 2000) );
+
+
+
     }
     osDelay(1);
   }
@@ -571,25 +676,24 @@ void StartHardwareTask(void const * argument)
 
 
 
-void setBuzzer(TIM_HandleTypeDef htim, uint32_t channel, uint32_t frequency, uint8_t volume) {  
+void setBuzzer(TIM_HandleTypeDef *htim, uint32_t channel, Buzzer_Data_t *Buzzer) 
+{  
 
   // If frequency is 0 or volume is 0, turn off the buzzer
-  if (frequency == 0 || volume == 0) {
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0); // Set duty 100% (OFF for active LOW)
+  if (Buzzer->frequency == 0 || Buzzer->volume == 0) {
+      __HAL_TIM_SET_COMPARE(htim, channel, 0); // Set duty 100% (OFF for active LOW)
       return;
   }
 
   // Set the ARR value for frequency control
-  __HAL_TIM_SET_PRESCALER(&htim, TIM_FREQ/(htim3.Instance->ARR * frequency));
+  __HAL_TIM_SET_PRESCALER(htim, TIM_FREQ/(htim->Instance->ARR * Buzzer->frequency));
 
   // Calculate CCR value for volume control (inverted for active LOW)
   // Volume is 0-100%, so we calculate the duty cycle as a percentage of ARR
-  // For active LOW, we invert the duty cycle (100% - volume%)
-  uint32_t ccr = volume * htim.Instance->ARR / 100;
+  uint32_t ccr = Buzzer->volume * htim->Instance->ARR / 100;
 
   // Set the CCR value for the specified channel
-  __HAL_TIM_SET_COMPARE(&htim, channel, ccr);
-
+  __HAL_TIM_SET_COMPARE(htim, channel, ccr);
 
 }
 

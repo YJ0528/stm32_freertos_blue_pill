@@ -78,6 +78,10 @@ void Error_Handler(void);
 #define BUZZER_GPIO_Port GPIOA
 #define BUTTON_BLUE_Pin GPIO_PIN_1
 #define BUTTON_BLUE_GPIO_Port GPIOB
+#define MPU_6050_SCL_Pin GPIO_PIN_10
+#define MPU_6050_SCL_GPIO_Port GPIOB
+#define MPU_6050_SDA_Pin GPIO_PIN_11
+#define MPU_6050_SDA_GPIO_Port GPIOB
 #define OLED_SCL_Pin GPIO_PIN_6
 #define OLED_SCL_GPIO_Port GPIOB
 #define OLE_SDA_Pin GPIO_PIN_7

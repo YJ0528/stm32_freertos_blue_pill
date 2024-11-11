@@ -98,9 +98,13 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM3_Init();
   MX_ADC2_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_4);
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_3);
+
 
   // HAL_TIM_Base_Start(&htim4);
   /* USER CODE END 2 */
