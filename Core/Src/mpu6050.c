@@ -63,6 +63,12 @@ Kalman_t KalmanY = {
     .R_measure = 0.03f,
 };
 
+Kalman_t KalmanZ = {
+    .Q_angle = 0.001f,
+    .Q_bias = 0.003f,
+    .R_measure = 0.03f
+};
+
 uint8_t MPU6050_Init(I2C_HandleTypeDef *I2Cx)
 {
     uint8_t check;
@@ -115,7 +121,7 @@ void MPU6050_Read_Accel(I2C_HandleTypeDef *I2Cx, MPU6050_t *DataStruct)
 
     DataStruct->Ax = DataStruct->Accel_X_RAW / 16384.0;
     DataStruct->Ay = DataStruct->Accel_Y_RAW / 16384.0;
-    DataStruct->Az = DataStruct->Accel_Z_RAW / Accel_Z_corrector;
+    DataStruct->Az = DataStruct->Accel_Z_RAW / 16384.0;
 }
 
 void MPU6050_Read_Gyro(I2C_HandleTypeDef *I2Cx, MPU6050_t *DataStruct)
@@ -172,7 +178,7 @@ void MPU6050_Read_All(I2C_HandleTypeDef *I2Cx, MPU6050_t *DataStruct)
 
     DataStruct->Ax = DataStruct->Accel_X_RAW / 16384.0;
     DataStruct->Ay = DataStruct->Accel_Y_RAW / 16384.0;
-    DataStruct->Az = DataStruct->Accel_Z_RAW / Accel_Z_corrector;
+    DataStruct->Az = DataStruct->Accel_Z_RAW / 16384.0;
     DataStruct->Temperature = (float)((int16_t)temp / (float)340.0 + (float)36.53);
     DataStruct->Gx = DataStruct->Gyro_X_RAW / 131.0;
     DataStruct->Gy = DataStruct->Gyro_Y_RAW / 131.0;
@@ -205,6 +211,19 @@ void MPU6050_Read_All(I2C_HandleTypeDef *I2Cx, MPU6050_t *DataStruct)
     if (fabs(DataStruct->KalmanAngleY) > 90)
         DataStruct->Gx = -DataStruct->Gx;
     DataStruct->KalmanAngleX = Kalman_getAngle(&KalmanX, roll, DataStruct->Gx, dt);
+    
+    // Apply low pass filter and bias compensation (suppose a magnetometer is required)
+    double gyro_bias = 0.45;  // Adjust this value based on the sensor bias at rest
+    if (fabs(DataStruct->Gz) < gyro_bias) 
+    {
+        DataStruct->Gz = 0.0;  // Remove very small movements that contribute to drift
+    }
+    DataStruct->yaw = DataStruct->yaw_prev + DataStruct->Gz * dt;
+    DataStruct->yaw_prev = DataStruct->yaw;
+
+    // Keep yaw in -180 to +180 range
+    if (DataStruct->yaw > 180) DataStruct->yaw -= 360;
+    if (DataStruct->yaw < -180) DataStruct->yaw += 360;     
 }
 
 double Kalman_getAngle(Kalman_t *Kalman, double newAngle, double newRate, double dt)

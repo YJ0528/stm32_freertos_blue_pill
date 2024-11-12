@@ -23,10 +23,8 @@ typedef struct {
 } DHT11_Sensor_Data_t;
 
 typedef struct {  
-    int16_t encoder_state;
-    int16_t encoder_count;
+    int16_t directory[2];
     int16_t enc_difference;
-    int16_t buzzer_params_select;
 } Enc_SensorData_t;
 
 typedef struct {  
