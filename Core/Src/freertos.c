@@ -66,11 +66,10 @@ char snum[32];
 char strCopy[15];
 
 /* USER CODE END Variables */
-osThreadId sensorTaskHandle;
+osThreadId signalTaskHandle;
 osThreadId displayTaskHandle;
 osThreadId hardwareTaskHandle;
 osMessageQId sensorQueueHandle;
-osMessageQId DHT11SensorQueueHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -81,7 +80,7 @@ void microDelay (uint16_t delay);
 
 /* USER CODE END FunctionPrototypes */
 
-void StartSensorTask(void const * argument);
+void StartSignalTask(void const * argument);
 void StartDisplayTask(void const * argument);
 void StartHardwareTask(void const * argument);
 
@@ -149,18 +148,14 @@ void MX_FREERTOS_Init(void) {
   osMessageQDef(sensorQueue, 32, uint32_t);
   sensorQueueHandle = osMessageCreate(osMessageQ(sensorQueue), NULL);
 
-  /* definition and creation of DHT11SensorQueue */
-  osMessageQDef(DHT11SensorQueue, 16, uint32_t);
-  DHT11SensorQueueHandle = osMessageCreate(osMessageQ(DHT11SensorQueue), NULL);
-
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* definition and creation of sensorTask */
-  osThreadDef(sensorTask, StartSensorTask, osPriorityNormal, 0, 128);
-  sensorTaskHandle = osThreadCreate(osThread(sensorTask), NULL);
+  /* definition and creation of signalTask */
+  osThreadDef(signalTask, StartSignalTask, osPriorityNormal, 0, 128);
+  signalTaskHandle = osThreadCreate(osThread(signalTask), NULL);
 
   /* definition and creation of displayTask */
   osThreadDef(displayTask, StartDisplayTask, osPriorityNormal, 0, 256);
@@ -176,16 +171,16 @@ void MX_FREERTOS_Init(void) {
 
 }
 
-/* USER CODE BEGIN Header_StartSensorTask */
+/* USER CODE BEGIN Header_StartSignalTask */
 /**
-  * @brief  Function implementing the sensorTask thread.
+  * @brief  Function implementing the signalTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartSensorTask */
-void StartSensorTask(void const * argument)
+/* USER CODE END Header_StartSignalTask */
+void StartSignalTask(void const * argument)
 {
-  /* USER CODE BEGIN StartSensorTask */
+  /* USER CODE BEGIN StartSignalTask */
     static uint16_t hadc1_values[1];
     static uint16_t hadc2_values[1];
     static int16_t enc_previous_count = 0;
@@ -193,7 +188,7 @@ void StartSensorTask(void const * argument)
     static int16_t button_previous = 0;
     static int16_t button_current = 0;
     
-   // Static allocation to ensure data remains valid
+    // Static allocation to ensure data remains valid
     static Enc_SensorData_t EncSensorData = {0};
     static LDR_Sensor_Data_t LDRSensorData = {0};
     static IR_Sensor_Data_t IRSsensorData = {0};
@@ -279,14 +274,15 @@ void StartSensorTask(void const * argument)
 
     // Read MPU6050 values
     MPU6050_Read_All(&hi2c2, &MPU6050);
-    HAL_Delay(10);
+    vTaskDelay (10);
   
-    // Read encoder
+    // Encoder
     // Check encoder selected function (changing slides or configure hardware parameter)
     button_current = HAL_GPIO_ReadPin(BUTTON_BLUE_GPIO_Port, BUTTON_BLUE_Pin);
     if (button_previous != button_current && button_current != 1) EncSensorData.directory[1] += 1;
     button_previous = button_current;
 
+    // Read and process encoder value
     EncSensorData.enc_difference = TIM1->CNT - enc_previous_count;
     enc_previous_count = TIM1->CNT;
     if (EncSensorData.enc_difference > 32767)EncSensorData.enc_difference -= 65533;
@@ -295,8 +291,7 @@ void StartSensorTask(void const * argument)
     if (EncSensorData.directory[1]%3 && 
         ((enc_current_count >= 0 && enc_current_count/4 % 6 >= 4) ||
         (enc_current_count < 0 && enc_current_count/4 % 6 >= -2)))    
-    {
-      
+    {      
       switch (enc_current_count / 4 % 6)
       {
         // Buzzer parameters
@@ -311,7 +306,7 @@ void StartSensorTask(void const * argument)
 
           case 2:
           buzzerSignalData.frequency += EncSensorData.enc_difference*100;
-          if (buzzerSignalData.frequency > 30000) buzzerSignalData.frequency  = 30000;
+          if (buzzerSignalData.frequency > 20000) buzzerSignalData.frequency  = 20000;
           if (buzzerSignalData.frequency < 0) buzzerSignalData.frequency = 0;
           break;
         }
@@ -322,7 +317,7 @@ void StartSensorTask(void const * argument)
         switch (EncSensorData.directory[1])
         {
           case 1:
-          servoPWMSignalData.angle += EncSensorData.enc_difference;
+          servoPWMSignalData.angle -= EncSensorData.enc_difference;
           if (servoPWMSignalData.angle > 180) servoPWMSignalData.angle  = 180;
           if (servoPWMSignalData.angle < 0) servoPWMSignalData.angle = 0;
           break;
@@ -371,7 +366,7 @@ void StartSensorTask(void const * argument)
     // Alternate: Control the os time
     // osDelayUntil(&PreviousWakeTime, period);
   }
-  /* USER CODE END StartSensorTask */
+  /* USER CODE END StartSignalTask */
 }
 
 /* USER CODE BEGIN Header_StartDisplayTask */
@@ -419,214 +414,210 @@ void StartDisplayTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-
+    // Check if received any message
     osEvent event = osMessageGet(sensorQueueHandle, 100);
-    if (event.status == osEventMessage)
-    {
-      // Unpack the messages to local
-      Combined_Sensor_Data_t* receivedData = (Combined_Sensor_Data_t*)event.value.p;
-
-      // Unpack the encoder data
-      receivedEncData = receivedData->encData;
-
-      // Compare the encoder value with the previous
-      if ((receivedEncData.directory[0] % 6) != previous)
-      {
-        SSD1306_Clear();
-        previous = receivedEncData.directory[0] % 6;
-      }
-
-      // Display the current page info
-      switch (receivedEncData.directory[0] % 6) {
-
-        case 0:
-        // Unpack MPU6050 data (for the hardware temperature only)
-        receivedMPU6050Data = receivedData->mpuData;
-
-        // Get current tick count and convert to time units
-        uint32_t currentTicks = osKernelSysTick();
-        uint32_t seconds = (currentTicks / 1000) % 60;  // Seconds from milliseconds
-        uint32_t minutes = (currentTicks / 60000) % 60; // Minutes from milliseconds
-        uint32_t hours = (currentTicks / 3600000) % 24; // Hours from milliseconds
-
-        // Format and display the time in HH:MM:SS
-        SSD1306_DrawFilledRectangle (4, 6, 116 , 26, 1);
-        sprintf(snum, " %02lu:%02lu:%02lu ", hours, minutes, seconds);
-        SSD1306_GotoXY(4, 12);
-        SSD1306_Puts(snum, &Font_11x18, 0);
-
-        // Hardware Temperature
-        sprintf(snum, "Hw Temp: %2d.%02dC", (int16_t)receivedMPU6050Data.Temperature, (int16_t)(receivedMPU6050Data.Temperature*100)%100);
-        SSD1306_GotoXY(0, 41);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-
-        // Display uptime in total seconds
-        sprintf(snum, "Uptime:  %lus", currentTicks / 1000);
-        SSD1306_GotoXY(0, 52);
-        SSD1306_Puts(snum, &Font_7x10, 1);      
-        break;
-
-        case 1: case -5:  
-        // Unpack IR sensor data
-        receivedIRData = receivedData->irData;
-      
-        // Display IR sensor data 
-        SSD1306_GotoXY(0,0);
-        SSD1306_Puts("IR Sensor", &Font_11x18, 1);
-        sprintf(snum, "Analog   :%4d", receivedIRData.analog_value);
-        SSD1306_GotoXY(0, 30);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        sprintf(snum, "Digital : %d", receivedIRData.digital_value);
-        SSD1306_GotoXY(0, 45);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        break;
-
-        case 2: case -4: 
-        // Unpack LDR sensor data
-        receivedLDR1Data = receivedData->ldrData;
+    if (!event.status == osEventMessage) continue;
   
-        // Display LDR sensor data
-        SSD1306_GotoXY(0,0);
-        SSD1306_Puts("LDR Sensor", &Font_11x18, 1);
-        sprintf(snum, "Analog   :%4d", receivedLDR1Data.analog_value);
-        SSD1306_GotoXY(0, 30);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        sprintf(snum, "Digital : %d", receivedLDR1Data.digital_value);
-        SSD1306_GotoXY(0, 45);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        break;
+    // Unpack the messages to local and extreact encoder data
+    Combined_Sensor_Data_t* receivedData = (Combined_Sensor_Data_t*)event.value.p;
+    receivedEncData = receivedData->encData;
 
-        case 3: case -3: 
-
-        // Unpack MPU6050 data
-        receivedMPU6050Data = receivedData->mpuData;
-
-        // Display MPU6050 data
-        SSD1306_GotoXY(0,0);
-        SSD1306_Puts("MPU-6050", &Font_11x18, 1);
-
-        // Display Header with partition
-        SSD1306_GotoXY(0, 20);
-        SSD1306_Puts("Acce:", &Font_7x10, 1);
-        SSD1306_GotoXY(70, 20);  // Adjusted x position for "Gyro:"
-        SSD1306_Puts("RPY:", &Font_7x10, 1);
-
-        // Draw vertical line partition 
-        SSD1306_DrawLine(64, 20, 64, 63, SSD1306_COLOR_WHITE); 
-
-        // Accelerometer X 
-        sprintf(snum, "X:%1d.%03d", (int16_t)(receivedMPU6050Data.Ax),
-                abs((int16_t)(receivedMPU6050Data.Ax * 100) % 1000));
-        SSD1306_GotoXY(0, 31);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-
-        // Accelerometer Y 
-        sprintf(snum, "Y:%1d.%03d", (int16_t)(receivedMPU6050Data.Ay),
-                abs((int16_t)(receivedMPU6050Data.Ay * 100) % 1000));
-        SSD1306_GotoXY(0, 42);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-
-        // Accelerometer Z 
-        sprintf(snum, "Z:%1d.%03d", (int16_t)(receivedMPU6050Data.Az),
-                abs((int16_t)(receivedMPU6050Data.Az * 100) % 1000));
-        SSD1306_GotoXY(0, 53);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-
-        // Gyro roll
-        sprintf(snum, "R:%2d.%02d", (int16_t)receivedMPU6050Data.KalmanAngleX,
-                abs((int16_t)(receivedMPU6050Data.KalmanAngleX * 100)%100));
-        SSD1306_GotoXY(70, 31);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-
-        // Gyro pitch
-        sprintf(snum, "P:%2d.%02d", (int16_t)receivedMPU6050Data.KalmanAngleY,
-                abs((int16_t)(receivedMPU6050Data.KalmanAngleY * 100)%100));
-        SSD1306_GotoXY(70, 42);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-
-        // Gyro yaw
-        sprintf(snum, "Y:%2d.%02d", (int16_t)receivedMPU6050Data.yaw,
-                abs((int16_t)(receivedMPU6050Data.yaw * 100)%100));
-        SSD1306_GotoXY(70, 53);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        break;
-
-        case 4: case -2: 
-        // Unpack buzzer data
-        receivedBuzzerData = receivedData->buzzerData;
-
-        // Display buzzer data
-        SSD1306_GotoXY(0,0);
-        SSD1306_Puts("Buzzer", &Font_11x18, 1);
-        sprintf(snum, "vol  :    %3d %%", receivedBuzzerData.volume);
-        SSD1306_GotoXY(0, 30);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        sprintf(snum, "freq :  %4d hz", receivedBuzzerData.frequency);
-        SSD1306_GotoXY(0, 45);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        break;
-
-        case 5: case -1: 
-        // Unpack servo motor data
-        receivedServoData = receivedData->servoData;
-
-        // Display servo motor data
-        SSD1306_GotoXY(0,0);
-        SSD1306_Puts("Servo Motor", &Font_11x18, 1);
-        sprintf(snum, "PWM  :    %4d %%", receivedServoData.angle);
-        SSD1306_GotoXY(0, 30);
-        SSD1306_Puts(snum, &Font_7x10, 1);
-        break;
-        
-        case 6:
-        // Unpack the DHT11 sensor data
-        receivedDHT11Data = receivedData->dht11Data;
-
-        // Display servo motor data
-        if (receivedDHT11Data.RHI + receivedDHT11Data.RHD + receivedDHT11Data.TCI + receivedDHT11Data.TCD == receivedDHT11Data.SUM)
-        {
-            // Can use RHI and TCI for any purposes if whole number only needed
-            tCelsius = (float)receivedDHT11Data.TCI + (float)(receivedDHT11Data.TCD/10.0);
-            tFahrenheit = tCelsius * 9/5 + 32;
-            RH = (float)receivedDHT11Data.RHI + (float)(receivedDHT11Data.RHD/10.0);
-            // Can use tCelsius, tFahrenheit and RH for any purposes
-            TFI = tFahrenheit; // Fahrenheit integral
-            TFD = tFahrenheit*10-TFI*10; // Fahrenheit decimal
-            // Display Temperature data
-            SSD1306_GotoXY(0,0);
-            SSD1306_Puts("Weather", &Font_11x18, 1);
-            sprintf(snum, "Pin state :%d", HAL_GPIO_ReadPin (DHT11_SENSOR_GPIO_Port, DHT11_SENSOR_Pin));
-            SSD1306_GotoXY(0, 30);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            sprintf(snum, "Pin type : %d", (DHT11_SENSOR_GPIO_Port->CRL >> (4 * (__builtin_ctz(DHT11_SENSOR_Pin) % 8))) & 0x3);
-            SSD1306_GotoXY(0, 45);
-            SSD1306_Puts(snum, &Font_7x10, 1);
-            // sprintf(strCopy,"%d.%d C ", receivedDHT11Data.TCI, receivedDHT11Data.TCD);
-            // SSD1306_GotoXY (0, 30);
-            // SSD1306_Puts (strCopy, &Font_7x10, 1);
-            // sprintf(strCopy,"%d.%d F ", TFI, TFD);
-            // SSD1306_GotoXY (0, 40);
-            // SSD1306_Puts (strCopy, &Font_7x10, 1);
-            // sprintf(strCopy,"%d.%d %% ", receivedDHT11Data.RHI, receivedDHT11Data.RHD);
-            // SSD1306_GotoXY (0, 50);
-            // SSD1306_Puts (strCopy, &Font_7x10, 1);
-        }
-        else
-        {
-                    
-        }
-        break;
-
-        default:
-        SSD1306_Clear();
-        SSD1306_GotoXY(0,0);
-        SSD1306_Puts("ERROR", &Font_11x18, 1);
-        SSD1306_UpdateScreen();
-        break;
-      }
-      SSD1306_UpdateScreen();
+    // Compare the encoder value with the previous
+    if ((receivedEncData.directory[0] % 6) != previous)
+    {
+      SSD1306_Clear();
+      previous = receivedEncData.directory[0] % 6;
     }
+
+    // Display the current page info
+    switch (receivedEncData.directory[0] % 6) {
+
+      case 0:
+      // Unpack MPU6050 data (for the hardware temperature only)
+      receivedMPU6050Data = receivedData->mpuData;
+
+      // Get current tick count and convert to time units
+      uint32_t currentTicks = osKernelSysTick();
+      uint32_t seconds = (currentTicks / 1000) % 60;  // Seconds from milliseconds
+      uint32_t minutes = (currentTicks / 60000) % 60; // Minutes from milliseconds
+      uint32_t hours = (currentTicks / 3600000) % 24; // Hours from milliseconds
+
+      // Format and display the time in HH:MM:SS
+      SSD1306_DrawFilledRectangle (4, 6, 116 , 26, 1);
+      sprintf(snum, " %02lu:%02lu:%02lu ", hours, minutes, seconds);
+      SSD1306_GotoXY(4, 12);
+      SSD1306_Puts(snum, &Font_11x18, 0);
+
+      // Hardware Temperature
+      sprintf(snum, "Hw Temp: %2d.%02dC", (int16_t)receivedMPU6050Data.Temperature, (int16_t)(receivedMPU6050Data.Temperature*100)%100);
+      SSD1306_GotoXY(0, 41);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+
+      // Display uptime in total seconds
+      sprintf(snum, "Uptime:  %lus", currentTicks / 1000);
+      SSD1306_GotoXY(0, 52);
+      SSD1306_Puts(snum, &Font_7x10, 1);      
+      break;
+
+      case 1: case -5:  
+      // Unpack IR sensor data
+      receivedIRData = receivedData->irData;
     
+      // Display IR sensor data 
+      SSD1306_GotoXY(0,0);
+      SSD1306_Puts("IR Sensor", &Font_11x18, 1);
+      sprintf(snum, "Analog   :%4d", receivedIRData.analog_value);
+      SSD1306_GotoXY(0, 30);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      sprintf(snum, "Digital : %d", receivedIRData.digital_value);
+      SSD1306_GotoXY(0, 45);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      break;
+
+      case 2: case -4: 
+      // Unpack LDR sensor data
+      receivedLDR1Data = receivedData->ldrData;
+
+      // Display LDR sensor data
+      SSD1306_GotoXY(0,0);
+      SSD1306_Puts("LDR Sensor", &Font_11x18, 1);
+      sprintf(snum, "Analog   :%4d", receivedLDR1Data.analog_value);
+      SSD1306_GotoXY(0, 30);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      sprintf(snum, "Digital : %d", receivedLDR1Data.digital_value);
+      SSD1306_GotoXY(0, 45);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      break;
+
+      case 3: case -3: 
+      // Unpack MPU6050 data
+      receivedMPU6050Data = receivedData->mpuData;
+
+      // Display MPU6050 data
+      SSD1306_GotoXY(0,0);
+      SSD1306_Puts("MPU-6050", &Font_11x18, 1);
+
+      // Display Header with partition
+      SSD1306_GotoXY(0, 20);
+      SSD1306_Puts("Acce:", &Font_7x10, 1);
+      SSD1306_GotoXY(70, 20);  // Adjusted x position for "Gyro:"
+      SSD1306_Puts("RPY:", &Font_7x10, 1);
+
+      // Draw vertical line partition 
+      SSD1306_DrawLine(64, 20, 64, 63, SSD1306_COLOR_WHITE); 
+
+      // Accelerometer X 
+      sprintf(snum, "X:%1d.%03d", (int16_t)(receivedMPU6050Data.Ax),
+              abs((int16_t)(receivedMPU6050Data.Ax * 100) % 1000));
+      SSD1306_GotoXY(0, 31);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+
+      // Accelerometer Y 
+      sprintf(snum, "Y:%1d.%03d", (int16_t)(receivedMPU6050Data.Ay),
+              abs((int16_t)(receivedMPU6050Data.Ay * 100) % 1000));
+      SSD1306_GotoXY(0, 42);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+
+      // Accelerometer Z 
+      sprintf(snum, "Z:%1d.%03d", (int16_t)(receivedMPU6050Data.Az),
+              abs((int16_t)(receivedMPU6050Data.Az * 100) % 1000));
+      SSD1306_GotoXY(0, 53);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+
+      // Gyro roll
+      sprintf(snum, "R:%2d.%02d", (int16_t)receivedMPU6050Data.KalmanAngleX,
+              abs((int16_t)(receivedMPU6050Data.KalmanAngleX * 100)%100));
+      SSD1306_GotoXY(70, 31);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+
+      // Gyro pitch
+      sprintf(snum, "P:%2d.%02d", (int16_t)receivedMPU6050Data.KalmanAngleY,
+              abs((int16_t)(receivedMPU6050Data.KalmanAngleY * 100)%100));
+      SSD1306_GotoXY(70, 42);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+
+      // Gyro yaw
+      sprintf(snum, "Y:%2d.%02d", (int16_t)receivedMPU6050Data.yaw,
+              abs((int16_t)(receivedMPU6050Data.yaw * 100)%100));
+      SSD1306_GotoXY(70, 53);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      break;
+
+      case 4: case -2: 
+      // Unpack buzzer data
+      receivedBuzzerData = receivedData->buzzerData;
+
+      // Display buzzer data
+      SSD1306_GotoXY(0,0);
+      SSD1306_Puts("Buzzer", &Font_11x18, 1);
+      sprintf(snum, "vol  :    %3d %%", receivedBuzzerData.volume);
+      SSD1306_GotoXY(0, 30);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      sprintf(snum, "freq :  %4d hz", receivedBuzzerData.frequency);
+      SSD1306_GotoXY(0, 45);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      break;
+
+      case 5: case -1: 
+      // Unpack servo motor data
+      receivedServoData = receivedData->servoData;
+
+      // Display servo motor data
+      SSD1306_GotoXY(0,0);
+      SSD1306_Puts("Servo Motor", &Font_11x18, 1);
+      sprintf(snum, "Angle  :    %2d deg", receivedServoData.angle);
+      SSD1306_GotoXY(0, 30);
+      SSD1306_Puts(snum, &Font_7x10, 1);
+      break;
+      
+      case 6:
+      // Unpack the DHT11 sensor data (Not being displayed for now)
+      receivedDHT11Data = receivedData->dht11Data;
+
+      // Display servo motor data
+      if (receivedDHT11Data.RHI + receivedDHT11Data.RHD + receivedDHT11Data.TCI + receivedDHT11Data.TCD == receivedDHT11Data.SUM)
+      {
+        // Can use RHI and TCI for any purposes if whole number only needed
+        tCelsius = (float)receivedDHT11Data.TCI + (float)(receivedDHT11Data.TCD/10.0);
+        tFahrenheit = tCelsius * 9/5 + 32;
+        RH = (float)receivedDHT11Data.RHI + (float)(receivedDHT11Data.RHD/10.0);
+        // Can use tCelsius, tFahrenheit and RH for any purposes
+        TFI = tFahrenheit; // Fahrenheit integral
+        TFD = tFahrenheit*10-TFI*10; // Fahrenheit decimal
+        // Display Temperature data
+        SSD1306_GotoXY(0,0);
+        SSD1306_Puts("Weather", &Font_11x18, 1);
+        sprintf(snum, "Pin state :%d", HAL_GPIO_ReadPin (DHT11_SENSOR_GPIO_Port, DHT11_SENSOR_Pin));
+        SSD1306_GotoXY(0, 30);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        sprintf(snum, "Pin type : %d", (DHT11_SENSOR_GPIO_Port->CRL >> (4 * (__builtin_ctz(DHT11_SENSOR_Pin) % 8))) & 0x3);
+        SSD1306_GotoXY(0, 45);
+        SSD1306_Puts(snum, &Font_7x10, 1);
+        // sprintf(strCopy,"%d.%d C ", receivedDHT11Data.TCI, receivedDHT11Data.TCD);
+        // SSD1306_GotoXY (0, 30);
+        // SSD1306_Puts (strCopy, &Font_7x10, 1);
+        // sprintf(strCopy,"%d.%d F ", TFI, TFD);
+        // SSD1306_GotoXY (0, 40);
+        // SSD1306_Puts (strCopy, &Font_7x10, 1);
+        // sprintf(strCopy,"%d.%d %% ", receivedDHT11Data.RHI, receivedDHT11Data.RHD);
+        // SSD1306_GotoXY (0, 50);
+        // SSD1306_Puts (strCopy, &Font_7x10, 1);
+      }
+      else
+      {
+                  
+      }
+      break;
+
+      default:
+      SSD1306_Clear();
+      SSD1306_GotoXY(0,0);
+      SSD1306_Puts("ERROR", &Font_11x18, 1);
+      SSD1306_UpdateScreen();
+      break;
+    }
+
+    SSD1306_UpdateScreen();
     osDelay(1);
   }
   /* USER CODE END StartDisplayTask */
@@ -663,38 +654,33 @@ void StartHardwareTask(void const * argument)
   for(;;)
   {
     osEvent event = osMessageGet(sensorQueueHandle, 100);
-    if (event.status == osEventMessage)
+    if (!event.status == osEventMessage) continue;
+  
+    // Unpack the messages to local
+    Combined_Sensor_Data_t* receivedData = (Combined_Sensor_Data_t*)event.value.p;
+
+    // Pointers for signal data
+    receivedIRData = receivedData->irData;
+    receivedLDR1Data = receivedData->ldrData;
+    receivedBuzzerData = receivedData->buzzerData;
+    receivedServoData = receivedData->servoData;
+
+    HAL_GPIO_WritePin (LED_BUILDIN_GPIO_Port, LED_BUILDIN_Pin, !receivedLDR1Data.digital_value);
+    __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 500 + ((float)receivedServoData.angle/180 * 2000) );
+
+    if (receivedIRData.digital_value)
     {
-      // Unpack the messages to local
-      Combined_Sensor_Data_t* receivedData = (Combined_Sensor_Data_t*)event.value.p;
-
-      // Pointers for signal data
-      receivedIRData = receivedData->irData;
-      receivedLDR1Data = receivedData->ldrData;
-      receivedBuzzerData = receivedData->buzzerData;
-      receivedServoData = receivedData->servoData;
-
-      HAL_GPIO_WritePin (LED_BUILDIN_GPIO_Port, LED_BUILDIN_Pin, !receivedLDR1Data.digital_value);
-      
-      if (!receivedIRData.digital_value)
-      {
-        if (receivedIRData.analog_value <= 200) setBuzzer(&htim3,TIM_CHANNEL_1, &receivedBuzzerData);
-        else
-        {
-          setBuzzer(&htim3,TIM_CHANNEL_1,&receivedBuzzerData);
-          osDelay(pow(sqrt(receivedIRData.analog_value), 1.4));
-          __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-          osDelay(pow(sqrt(receivedIRData.analog_value), 1.4));
-        }
-      } 
-      else __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-      
-      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, 500 + ((float)receivedServoData.angle/180 * 2000) );
-
-      
-
-
-
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+      continue;
+    } 
+    
+    if (receivedIRData.analog_value <= 200) setBuzzer(&htim3,TIM_CHANNEL_1, &receivedBuzzerData);
+    else
+    {
+      setBuzzer(&htim3,TIM_CHANNEL_1,&receivedBuzzerData);
+      vTaskDelay(pow(sqrt(receivedIRData.analog_value), 1.4));
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
+      vTaskDelay(pow(sqrt(receivedIRData.analog_value), 1.4));
     }
     osDelay(1);
   }
@@ -703,8 +689,6 @@ void StartHardwareTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-
-
 
 void setBuzzer(TIM_HandleTypeDef *htim, uint32_t channel, Buzzer_Data_t *Buzzer) 
 {  
